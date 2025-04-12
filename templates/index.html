@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>PiCar-X Interface</title>
+  <style>
+    #controls { margin-top: 20px; }
+    #video, #map {
+      border: 1px solid black;
+      width: 48%;
+      height: 300px;
+      display: inline-block;
+      vertical-align: top;
+    }
+  </style>
+</head>
+<body>
+  <h1>PiCar-X Interface</h1>
+  <div id="video">
+    <iframe src="http://192.168.137.30:8080" width="100%" height="100%" frameborder="0"></iframe>
+  </div>
+  <canvas id="map" width="400" height="300"></canvas>
+
+  <div id="controls">
+    <button onclick="setMode('manual')">Manual Mode</button>
+    <button onclick="setMode('mapping')">Mapping Mode</button>
+    <button onclick="setMode('autonomous')">Autonomous Mode</button>
+  </div>
+
+  <script src="https://cdn.socket.io/4.3.2/socket.io.min.js"></script>
+  <script src="{{ url_for('static', filename='script.js') }}"></script>
+</body>
+</html>
