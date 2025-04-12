@@ -26,6 +26,7 @@ OBSTACLE_THRESHOLD = 15.0
 pan_angle = 0
 tilt_angle = 0
 
+# --- Robot Control ---
 def forward():
     px.set_dir_servo_angle(0)
     px.forward(80)
@@ -50,6 +51,7 @@ def stop():
 def get_ultrasonic_distance():
     return round(px.get_distance(), 2)
 
+# --- Position & Mapping ---
 def update_position(action):
     if action == "forward":
         robot_state["x"] += STEP_DISTANCE * math.cos(robot_state["heading"])
@@ -77,6 +79,7 @@ def update_map_data():
         "walls": robot_state["walls"]
     }
 
+# --- Autonomous Mode ---
 def autonomous_step():
     distance = get_ultrasonic_distance()
     if distance < OBSTACLE_THRESHOLD:
@@ -111,6 +114,7 @@ def background_loop():
 
         time.sleep(0.5)
 
+# --- Flask Routes ---
 @app.route("/")
 def index():
     return render_template("index.html")
@@ -164,9 +168,11 @@ def control():
 
     return jsonify({"status": "ok"})
 
+# --- Entry Point ---
 if __name__ == "__main__":
     Vilib.camera_start(vflip=False, hflip=False)
     Vilib.display(local=False, web=True)
-    Vilib.color_detect("orange")  # enable orange detection
+    Vilib.color_detect("orange")
+
     threading.Thread(target=background_loop, daemon=True).start()
     socketio.run(app, host="0.0.0.0", port=5050)
