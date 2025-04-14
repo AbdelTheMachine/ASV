@@ -1,0 +1,193 @@
+import os
+import sys
+import threading
+import readchar
+from time import sleep, time
+from vilib import Vilib
+from picarx import Picarx
+
+px = Picarx()
+
+# Constants
+SPEED = 1
+DELAY = 0.1
+SAFE_DISTANCE = 15  # cm
+LINE_THRESHOLD = 900
+MAP_WIDTH = 16
+MAP_HEIGHT = 12
+map_grid = [[',' for _ in range(MAP_WIDTH)] for _ in range(MAP_HEIGHT)]
+car_x, car_y = MAP_HEIGHT - 1, 0
+
+mode = 'menu'  # manual, auto
+orange_detected = False
+sweep_angles = [-45, 0, 45]
+last_state = 'center'
+
+# Init camera
+Vilib.camera_start(vflip=False, hflip=False)
+Vilib.display(local=True, web=True)
+Vilib.color_detect("orange")
+
+# Grayscale callibration function 
+def calibrate_grayscale():
+    print("Calibrating grayscale sensors. Hold over white, then black surface.")
+    input("Press ENTER when ready to capture white...")
+    white_vals = px.get_grayscale_data()
+    print(f"White values: {white_vals}")
+    input("Place over black tape and press ENTER...")
+    black_vals = px.get_grayscale_data()
+    print(f"Black values: {black_vals}")
+    avg_vals = [(w + b) // 2 for w, b in zip(white_vals, black_vals)]
+    print(f"Setting reference to: {avg_vals}")
+    px.set_line_reference(avg_vals)
+
+# Dynamic map update fucntion
+def update_map():
+    for r in range(MAP_HEIGHT):
+        for c in range(MAP_WIDTH):
+            map_grid[r][c] = ','
+    map_grid[car_x][car_y] = '!' if orange_detected else 'o'
+
+
+def draw_map():
+    update_map()
+    print("\033[H\033[J", end="")
+    for row in map_grid:
+        print(''.join(row))
+    print("\n1: Manual  2: Auto  3: Quit  4: Calibrate")
+    if mode == 'manual':
+        print("Manual Mode: WASD to move, IJKL to pan/tilt, X to exit")
+    elif mode == 'auto':
+        print("Autonomous Mode: Line Following. C: Clear  R: Report  X: Exit")
+
+# Car step
+def move_car(dx, dy):
+    global car_x, car_y
+    car_x = max(0, min(MAP_HEIGHT - 1, car_x + dx))
+    car_y = max(0, min(MAP_WIDTH - 1, car_y + dy))
+
+# Manuel mode char controls 
+def manual_mode():
+    global mode
+    while mode == 'manual':
+        draw_map()
+        key = readchar.readkey()
+        if key == 'w': px.set_dir_servo_angle(0); px.forward(SPEED); move_car(-1, 0)
+        elif key == 's': px.set_dir_servo_angle(0); px.backward(SPEED); move_car(1, 0)
+        elif key == 'a': px.set_dir_servo_angle(-30); px.forward(SPEED); move_car(0, -1)
+        elif key == 'd': px.set_dir_servo_angle(30); px.forward(SPEED); move_car(0, 1)
+        elif key == 'i': px.set_cam_tilt_angle(30)
+        elif key == 'k': px.set_cam_tilt_angle(-30)
+        elif key == 'j': px.set_cam_pan_angle(-45)
+        elif key == 'l': px.set_cam_pan_angle(45)
+        elif key == 'x': px.stop(); mode = 'menu'
+        sleep(DELAY)
+        px.stop()
+
+# Grayscale direction 
+def get_line_status():
+    gm = px.get_grayscale_data()
+    status = px.get_line_status(gm)
+    if status == [0, 0, 0]: return 'center'
+    elif status[1] == 1: return 'forward'
+    elif status[0] == 1: return 'right'
+    elif status[2] == 1: return 'left'
+    return 'unknown'
+
+# Realign function
+def precise_realign():
+    global last_state
+    print("Out of line, attempting realignment...")
+    if last_state == 'left':
+        px.set_dir_servo_angle(-25)
+        px.backward(SPEED)
+    elif last_state == 'right':
+        px.set_dir_servo_angle(25)
+        px.backward(SPEED)
+    sleep(0.3)
+    while True:
+        status = get_line_status()
+        print("Scanning for line...")
+        if status != last_state:
+            break
+        sleep(0.05)
+
+# Auto mode 
+def auto_mode():
+    global mode, orange_detected, last_state
+    angle_index = 0
+
+    while mode == 'auto':
+        draw_map()
+        distance = px.get_distance()
+        orange_size = Vilib.detect_obj_parameter['color_w'] * Vilib.detect_obj_parameter['color_h']
+
+        # Surveilance using vilib, orange detection
+        if Vilib.detect_obj_parameter['color_n'] > 0 and orange_size > 1000:
+            orange_detected = True
+            px.stop()
+            print("Bright orange detected. (C)lear or (R)eport")
+            while True:
+                cmd = readchar.readkey()
+                if cmd == 'c': orange_detected = False; break
+                elif cmd == 'r': print("Calling 911..."); sleep(2); orange_detected = False; break
+        # Wall avoidnace
+        elif distance is not None and distance < SAFE_DISTANCE:
+            print(f"Wall detected {distance:.1f}cm. Avoiding...")
+            px.backward(SPEED); sleep(0.5)
+            px.set_dir_servo_angle(35); px.forward(SPEED); sleep(0.5)
+        else:
+            orange_detected = False
+            state = get_line_status()
+            if state == 'center':
+                px.set_dir_servo_angle(0)
+                px.forward(SPEED)
+                move_car(-1, 0)
+            elif state == 'left':
+                px.set_dir_servo_angle(35)
+                px.forward(SPEED)
+                move_car(0, -1)
+            elif state == 'right':
+                px.set_dir_servo_angle(-35)
+                px.forward(SPEED)
+                move_car(0, 1)
+            elif state == 'forward':
+                px.set_dir_servo_angle(0)
+                px.forward(SPEED)
+            elif state == 'unknown':
+                precise_realign()
+            last_state = state
+
+        px.set_cam_pan_angle(sweep_angles[angle_index])
+        angle_index = (angle_index + 1) % len(sweep_angles)
+        sleep(DELAY)
+        px.stop()
+
+        print("Press 'x' to exit Auto Mode")
+        if sys.stdin in select.select([sys.stdin], [], [], 0)[0]:
+            if sys.stdin.read(1).lower() == 'x':
+                mode = 'menu'
+                px.stop()
+                break
+
+
+def main_menu():
+    global mode
+    while True:
+        draw_map()
+        key = readchar.readkey()
+        if key == '1': mode = 'manual'; manual_mode()
+        elif key == '2': mode = 'auto'; auto_mode()
+        elif key == '3': print("Quitting..."); px.stop(); break
+        elif key == '4': calibrate_grayscale()
+        sleep(0.1)
+
+
+if __name__ == '__main__':
+    import select, tty, termios
+    old_settings = termios.tcgetattr(sys.stdin)
+    try:
+        tty.setcbreak(sys.stdin.fileno())
+        main_menu()
+    finally:
+        termios.tcsetattr(sys.stdin, termios.TCSADRAIN, old_settings)
